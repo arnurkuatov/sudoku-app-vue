@@ -1,5 +1,7 @@
 // src/utils/sudokuSolver.ts
 
+import {validateCell} from "./sudokuValidator";
+
 export function countSolutions(board: number[][]): number {
     // Clone board to avoid modifying original
     const puzzle = board.map((row) => [...row])
@@ -51,3 +53,29 @@ export function countSolutions(board: number[][]): number {
     backtrack()
     return solutionsFound
 }
+
+// export function validateAndSetWithResult(row: number, col: number, value: number): boolean {
+//     // If prefilled, ignore
+//     if (this.isCellPrefilled(row, col)) return false
+//
+//     const isValid = validateCell(this.puzzle, row, col, value)
+//     if (!isValid) {
+//         this.score -= 1
+//         this.errors++
+//         return false
+//     }
+//
+//     const oldVal = this.puzzle[row][col]
+//     if (oldVal === value) return true // no change
+//     this.puzzle[row][col] = value
+//
+//     if (value === this.solution[row][col]) {
+//         this.score += 5
+//     } else {
+//         this.score -= 1
+//     }
+//
+//     // record a move for undo/redo if desired...
+//     // then checkWin()...
+//     return true
+// }

@@ -150,6 +150,12 @@ export default defineComponent({
 .prefilled {
   font-weight: bold;
   font-size: 1.1rem;
+  background-color: #e2e2e2;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 .final-value {
   font-size: 1.1rem;

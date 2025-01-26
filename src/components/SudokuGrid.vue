@@ -49,8 +49,6 @@ export default defineComponent({
   display: inline-block;
   border: 2px solid #000; /* Outer border */
 }
-
-/* Each row is displayed in flex row */
 .sudoku-row {
   display: flex;
   border-bottom: 1px solid #bbb; /* Normal row border */
