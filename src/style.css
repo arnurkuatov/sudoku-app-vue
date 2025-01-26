@@ -1,0 +1,17 @@
+/*.sudoku-grid {*/
+/*  border: 2px solid #444;*/
+/*}*/
+/*.sudoku-row + .sudoku-row {*/
+/*  border-top: 2px solid #444;*/
+/*}*/
+/*.cell {*/
+/*  position: relative;*/
+/*  text-align: center;*/
+/*  border-right: 1px solid #444;*/
+/*}*/
+/*.cell:nth-child(3), .cell:nth-child(6) {*/
+/*  border-right: 2px solid #000;*/
+/*}*/
+/*.sudoku-row:nth-child(3), .sudoku-row:nth-child(6) {*/
+/*  border-top: 2px solid #000;*/
+/*}*/
