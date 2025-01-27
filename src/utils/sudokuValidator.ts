@@ -1,4 +1,3 @@
-// src/utils/sudokuValidator.ts
 export function validateCell(
     puzzle: number[][],
     row: number,
@@ -6,6 +5,10 @@ export function validateCell(
     value: number
 ): boolean {
     if (value < 1 || value > 9) return false
+
+    if (!puzzle || puzzle.length !== 9 || puzzle[row]?.length !== 9) {
+        throw new Error("Puzzle is not a 9x9 array or row/col out of range.");
+    }
 
     // Row check
     for (let c = 0; c < 9; c++) {

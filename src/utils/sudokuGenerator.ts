@@ -1,4 +1,3 @@
-// src/utils/sudokuGenerator.ts
 import { countSolutions } from './sudokuSolver'
 
 export enum Difficulty {

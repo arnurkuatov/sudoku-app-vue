@@ -1,7 +1,7 @@
-// src/store/sudokuStore.ts
 import { defineStore } from 'pinia'
-import {Difficulty, DifficultyKey, generateSudoku} from "../utils/sudokuGenerator";
+import { ref } from 'vue'
 import {validateCell} from "../utils/sudokuValidator";
+import {Difficulty, DifficultyKey, generateSudoku} from "../utils/sudokuGenerator";
 
 export interface LeaderboardRecord {
     name: string
@@ -17,237 +17,268 @@ export interface Move {
     timestamp: number
 }
 
-export const useSudokuStore = defineStore('sudoku', {
-    state: () => ({
-        puzzle: [] as number[][],      // 0 = empty
-        solution: [] as number[][],
-        difficulty: 'beginner' as DifficultyKey,
-        score: 0,
-        hintsUsed: 0,
-        errors: 0,
-        startTime: 0,
-        paused: false,
-        // Undo/Redo
-        moves: [] as Move[],
-        currentMoveIndex: -1,
-        // Leaderboard
-        leaderboard: {
-            [Difficulty.BEGINNER]: [] as LeaderboardRecord[],
-            [Difficulty.INTERMEDIATE]: [],
-            [Difficulty.HARD]: [],
-            [Difficulty.EXPERT]: []
-        },
-        // Draft / Pencil
-        isDraftMode: false,
-        draft: Array.from({ length: 9 }, () =>
+export const useSudokuStore = defineStore('sudoku', () => {
+    // Puzzle and solution
+    const puzzle = ref<number[][]>([])
+    const solution = ref<number[][]>([])
+    const difficulty = ref<DifficultyKey>('beginner')
+
+    // Keep a 9×9 boolean for which cells are prefilled from the start:
+    const prefilled = ref<boolean[][]>(Array.from({ length: 9 }, () =>
+        Array.from({ length: 9 }, () => false)
+    ))
+
+    // Score, hints, errors, time
+    const score = ref(0)
+    const hintsUsed = ref(0)
+    const errors = ref(0)
+    const startTime = ref(0)
+    const paused = ref(false)
+
+    // Undo/Redo
+    const moves = ref<Move[]>([])
+    const currentMoveIndex = ref(-1)
+
+    // Leaderboard
+    const leaderboard = ref({
+        [Difficulty.BEGINNER]: [] as LeaderboardRecord[],
+        [Difficulty.INTERMEDIATE]: [],
+        [Difficulty.HARD]: [],
+        [Difficulty.EXPERT]: []
+    })
+
+    // Draft / Pencil
+    const isDraftMode = ref(false)
+    const draft = ref<Array<Array<Set<number>>>>(
+        Array.from({ length: 9 }, () =>
             Array.from({ length: 9 }, () => new Set<number>())
-        ) as Set<number>[][],
-    }),
+        )
+    )
 
-    actions: {
-        initGame(difficulty: DifficultyKey) {
-            this.difficulty = difficulty
-            const { puzzle, solution } = generateSudoku(difficulty)
-            this.puzzle = puzzle
-            this.solution = solution
+    function initGame(diffKey: DifficultyKey) {
+        difficulty.value = diffKey
 
-            // reset
-            this.score = 0
-            this.hintsUsed = 0
-            this.errors = 0
-            this.moves = []
-            this.currentMoveIndex = -1
-            this.startTime = Date.now()
-            this.paused = false
+        const { puzzle: newPuzzle, solution: newSolution } = generateSudoku(diffKey)
+        puzzle.value = newPuzzle
+        solution.value = newSolution
 
-            this.draft = Array.from({ length: 9 }, () =>
-                Array.from({ length: 9 }, () => new Set<number>())
-            )
+        // Mark prefilled cells (where puzzle != 0):
+        prefilled.value = Array.from({ length: 9 }, (_, r) =>
+            Array.from({ length: 9 }, (_, c) => puzzle.value[r][c] !== 0)
+        )
 
-            this.loadLeaderboard()
-        },
+        // reset
+        score.value = 0
+        hintsUsed.value = 0
+        errors.value = 0
+        moves.value = []
+        currentMoveIndex.value = -1
+        draft.value = Array.from({ length: 9 }, () =>
+            Array.from({ length: 9 }, () => new Set<number>())
+        )
 
-        validateAndSet(row: number, col: number, value: number) {
-            // If cell matches solution from the get-go, it was 'prefilled'
-            if (this.isCellPrefilled(row, col)) return
+        startTime.value = Date.now()
+        paused.value = false
 
-            const oldVal = this.puzzle[row][col]
-            if (oldVal === value) return // no change
+        loadLeaderboard()
+    }
 
-            const isValid = validateCell(this.puzzle, row, col, value)
-            if (!isValid) {
-                this.score -= 1
-                this.errors++
-                return
-            }
+    // When checking prefilled, we ONLY rely on `prefilled[row][col]`, never puzzle==solution
+    function isCellPrefilled(row: number, col: number) {
+        return prefilled.value[row][col]
+    }
 
-            // place the value
-            this.puzzle[row][col] = value
-            // scoring
-            if (value === this.solution[row][col]) {
-                this.score += 5
-            } else {
-                this.score -= 1
-            }
+    function validateAndSet(row: number, col: number, value: number) {
+        // If it's truly an original prefilled cell, do not allow changing
+        if (isCellPrefilled(row, col)) {
+            return false
+        }
 
-            // record move for Undo/Redo
-            const move: Move = {
-                row,
-                col,
-                oldValue: oldVal,
-                newValue: value,
-                timestamp: Date.now()
-            }
-            // If we've undone some moves, remove future moves
-            if (this.currentMoveIndex < this.moves.length - 1) {
-                this.moves.splice(this.currentMoveIndex + 1)
-            }
-            this.moves.push(move)
-            this.currentMoveIndex++
+        // oldVal = the current puzzle digit
+        const oldVal = puzzle.value[row][col]
 
-            // Clear the draft for that cell if we finalize a digit
-            this.draft[row][col].clear()
+        // 1) Check if conflict
+        if (!validateCell(puzzle.value, row, col, value)) {
+            // e.g. subtract error points if you do scoring
+            return false
+        }
 
-            this.checkWin()
-        },
+        // 2) Overwrite the cell with the new digit
+        puzzle.value[row][col] = value
 
-        // For the puzzle's original (non-zero) cell that matches solution, treat as prefilled
-        isCellPrefilled(row: number, col: number) {
-            // If puzzle cell equals solution and wasn't changed by user,
-            // we can consider it prefilled.
-            // Another approach is to store an initial mask.
-            return this.solution[row][col] === this.puzzle[row][col] && this.moves.length === 0
-        },
+        // 3) Score: If correct vs. solution
+        if (value === solution.value[row][col]) {
+            score.value += 5
+        } else {
+            score.value -= 1
+        }
 
-        checkWin() {
-            for (let r = 0; r < 9; r++) {
-                for (let c = 0; c < 9; c++) {
-                    if (this.puzzle[r][c] !== this.solution[r][c]) {
-                        return
-                    }
-                }
-            }
-            // Completed
-            this.endGame()
-        },
+        // 4) Record for undo/redo
+        const move: Move = {
+            row,
+            col,
+            oldValue: oldVal,
+            newValue: value,
+            timestamp: Date.now()
+        }
+        // (If you truncated future moves after currentMoveIndex, do that here)
+        moves.value.push(move)
+        currentMoveIndex.value++
 
-        endGame() {
-            const timeElapsed = Math.floor((Date.now() - this.startTime) / 1000)
-            const finalScore = this.score + (500 - timeElapsed)
-            this.score = finalScore
-            // add to leaderboard
-            this.updateLeaderboard(finalScore)
-        },
+        // 5) Check if the entire puzzle is solved, etc.
+        checkWin()
 
-        updateLeaderboard(finalScore: number) {
-            const diff = this.difficulty as Difficulty
-            const record: LeaderboardRecord = {
-                name: 'Player', // or prompt user for name
-                score: finalScore,
-                date: new Date().toISOString()
-            }
-            const arr = this.leaderboard[diff]
-            arr.push(record)
-            arr.sort((a, b) => b.score - a.score)
-            this.leaderboard[diff] = arr.slice(0, 3)
-            localStorage.setItem(`leaderboard_${diff}`, JSON.stringify(this.leaderboard[diff]))
-        },
+        return true
+    }
 
-        loadLeaderboard() {
-            Object.values(Difficulty).forEach((diff) => {
-                const data = localStorage.getItem(`leaderboard_${diff}`)
-                if (data) {
-                    this.leaderboard[diff] = JSON.parse(data) as LeaderboardRecord[]
-                }
-            })
-        },
-
-        useHint() {
-            if (this.hintsUsed >= 10) return
-
-            // find an empty cell
-            let row = -1, col = -1
-            for (let r = 0; r < 9; r++) {
-                for (let c = 0; c < 9; c++) {
-                    if (this.puzzle[r][c] === 0) {
-                        row = r
-                        col = c
-                        break
-                    }
-                }
-                if (row !== -1) break
-            }
-            if (row === -1) return // no empty cells
-
-            const oldVal = this.puzzle[row][col]
-            const correctVal = this.solution[row][col]
-            this.puzzle[row][col] = correctVal
-            this.hintsUsed++
-
-            // scoring: +5 for correct cell, minus progressive penalty
-            this.score += 5
-            const penalty = 3 + (this.hintsUsed - 1) // 1st: -3, 2nd: -4...
-            this.score -= penalty
-
-            // record as a move
-            if (this.currentMoveIndex < this.moves.length - 1) {
-                this.moves.splice(this.currentMoveIndex + 1)
-            }
-            this.moves.push({
-                row,
-                col,
-                oldValue: oldVal,
-                newValue: correctVal,
-                timestamp: Date.now()
-            })
-            this.currentMoveIndex++
-
-            this.checkWin()
-        },
-
-        // Draft toggling
-        toggleDraft(row: number, col: number, digit: number) {
-            if (this.isCellPrefilled(row, col)) return
-            const s = this.draft[row][col]
-            if (s.has(digit)) {
-                s.delete(digit)
-            } else {
-                s.add(digit)
-            }
-        },
-
-        clearDraft(row: number, col: number) {
-            this.draft[row][col].clear()
-        },
-
-        // Undo/Redo
-        undo() {
-            if (this.currentMoveIndex >= 0) {
-                const move = this.moves[this.currentMoveIndex]
-                this.puzzle[move.row][move.col] = move.oldValue
-                this.currentMoveIndex--
-            }
-        },
-        redo() {
-            if (this.currentMoveIndex < this.moves.length - 1) {
-                this.currentMoveIndex++
-                const move = this.moves[this.currentMoveIndex]
-                this.puzzle[move.row][move.col] = move.newValue
-            }
-        },
-
-        // Auto-pause
-        pauseGame() {
-            if (!this.paused) {
-                this.paused = true
-                // (If you have a timer that increments every second, you'd stop it here.)
-            }
-        },
-        resumeGame() {
-            if (this.paused) {
-                this.paused = false
-                // (Restart the timer.)
+    function checkWin() {
+        // If puzzle == solution for all cells
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                if (puzzle.value[r][c] !== solution.value[r][c]) return
             }
         }
+        endGame()
+    }
+
+    function endGame() {
+        const timeElapsed = Math.floor((Date.now() - startTime.value) / 1000)
+        const finalScore = score.value + (500 - timeElapsed)
+        score.value = finalScore
+        updateLeaderboard(finalScore)
+    }
+
+    function updateLeaderboard(finalScore: number) {
+        const diff = difficulty.value as Difficulty
+        const record: LeaderboardRecord = {
+            name: 'Player',
+            score: finalScore,
+            date: new Date().toISOString()
+        }
+        leaderboard.value[diff].push(record)
+        leaderboard.value[diff].sort((a, b) => b.score - a.score)
+        leaderboard.value[diff] = leaderboard.value[diff].slice(0, 3)
+        localStorage.setItem(`leaderboard_${diff}`, JSON.stringify(leaderboard.value[diff]))
+    }
+
+    function loadLeaderboard() {
+        Object.values(Difficulty).forEach((diff) => {
+            const data = localStorage.getItem(`leaderboard_${diff}`)
+            if (data) {
+                leaderboard.value[diff] = JSON.parse(data) as LeaderboardRecord[]
+            }
+        })
+    }
+
+    // Hints
+    function useHint() {
+        if (hintsUsed.value >= 10) return
+        // find an empty cell
+        let row = -1, col = -1
+        outer: for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                if (puzzle.value[r][c] === 0) {
+                    row = r
+                    col = c
+                    break outer
+                }
+            }
+        }
+        if (row === -1) return // no empty cells
+
+        const oldVal = puzzle.value[row][col]
+        const correctVal = solution.value[row][col]
+        puzzle.value[row][col] = correctVal
+        hintsUsed.value++
+
+        // +5 for correct, then progressive penalty
+        score.value += 5
+        const penalty = 3 + (hintsUsed.value - 1)
+        score.value -= penalty
+
+        // record move
+        if (currentMoveIndex.value < moves.value.length - 1) {
+            moves.value.splice(currentMoveIndex.value + 1)
+        }
+        moves.value.push({ row, col, oldValue: oldVal, newValue: correctVal, timestamp: Date.now() })
+        currentMoveIndex.value++
+
+        checkWin()
+    }
+
+    // Draft
+    function toggleDraft(row: number, col: number, digit: number) {
+        if (isCellPrefilled(row, col)) return
+        const set = draft.value[row][col]
+        if (set.has(digit)) set.delete(digit)
+        else set.add(digit)
+    }
+
+    function clearDraft(row: number, col: number) {
+        draft.value[row][col].clear()
+    }
+
+    // Undo/Redo
+    function undo() {
+        if (currentMoveIndex.value >= 0) {
+            const move = moves.value[currentMoveIndex.value]
+            puzzle.value[move.row][move.col] = move.oldValue
+            currentMoveIndex.value--
+        }
+    }
+    function redo() {
+        if (currentMoveIndex.value < moves.value.length - 1) {
+            currentMoveIndex.value++
+            const move = moves.value[currentMoveIndex.value]
+            puzzle.value[move.row][move.col] = move.newValue
+        }
+    }
+
+    // Auto-pause
+    function pauseGame() {
+        if (!paused.value) {
+            paused.value = true
+        }
+    }
+    function resumeGame() {
+        if (paused.value) {
+            paused.value = false
+        }
+    }
+
+    return {
+        puzzle,
+        solution,
+        difficulty,
+        prefilled,
+
+        score,
+        hintsUsed,
+        errors,
+        startTime,
+        paused,
+
+        moves,
+        currentMoveIndex,
+
+        leaderboard,
+
+        isDraftMode,
+        draft,
+
+        initGame,
+        isCellPrefilled,
+        validateAndSet,
+        checkWin,
+        endGame,
+        updateLeaderboard,
+        loadLeaderboard,
+        useHint,
+        toggleDraft,
+        clearDraft,
+        undo,
+        redo,
+        pauseGame,
+        resumeGame
     }
 })
